@@ -5,7 +5,6 @@ const torrentStream = require('torrent-stream');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
 
 // Serve static HTML for file upload UI
 app.use(express.static('public'));
