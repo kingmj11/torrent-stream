@@ -19,18 +19,28 @@
         const fileInput = document.getElementById('file-input');
         const videoPlayer = document.getElementById('video-player');
 
-        function uploadFile(file) {
+        async function uploadFile(file) {
             const formData = new FormData();
             formData.append('file', file);
 
-            fetch('/upload', { method: 'POST', body: formData })
-                .then(response => response.json())
-                .then(data => {
-                    videoPlayer.src = data.streamUrl;
-                    videoPlayer.style.display = 'block';
-                    videoPlayer.play();
-                })
-                .catch(err => alert('Failed to upload: ' + err));
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+
+                if (!response.ok) {
+                    // Try to read the error message returned by the server
+                    const errorText = await response.text();
+                    throw new Error(`Server responded with ${response.status}: ${errorText}`);
+                }
+
+                const data = await response.json();
+
+                videoPlayer.src = data.streamUrl;
+                videoPlayer.style.display = 'block';
+                videoPlayer.play();
+
+            } catch (err) {
+                alert('Failed to upload: ' + err.message);
+            }
         }
 
         fileInput.addEventListener('change', () => {
