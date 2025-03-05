@@ -6,20 +6,19 @@ const path = require('path');
 
 const app = express();
 
+const UPLOADS_DIR = '/tmp'; // Use /tmp for Koyeb compatibility
+
+// Ensure /tmp directory exists (important for Koyeb)
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 // Serve static HTML for file upload UI
 app.use(express.static('public'));
 
-// Define upload directory — use /tmp on Koyeb, fallback to local 'uploads' for development
-const uploadDir = process.env.KOYEB || process.env.PORT ? '/tmp' : path.join(__dirname, 'uploads');
-
-// Ensure upload directory exists (for local only, on Koyeb /tmp always exists)
-if (uploadDir !== '/tmp' && !fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// Multer setup - for uploading files (save to /tmp on Koyeb, 'uploads' locally)
+// Multer setup - for uploading files
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename: (req, file, cb) => cb(null, file.originalname)
 });
 const upload = multer({ storage });
@@ -29,32 +28,21 @@ let engine; // This will hold the torrent-stream engine
 app.post('/upload', upload.single('file'), (req, res) => {
     console.log('Received file:', req.file.originalname);
 
-    const torrentPath = path.join(uploadDir, req.file.filename);
-    console.log(`Torrent file saved to: ${torrentPath}`);
+    const torrentPath = path.join(UPLOADS_DIR, req.file.filename);
 
-    // Destroy previous engine if any
-    if (engine) {
-        console.log('Destroying previous engine');
-        engine.destroy();
-    }
+    if (engine) engine.destroy(); // Clear any previous engine
 
-    try {
-        engine = torrentStream(fs.readFileSync(torrentPath));
-    } catch (err) {
-        console.error('Failed to read torrent file:', err);
-        return res.status(500).json({ error: 'Failed to read torrent file' });
-    }
+    engine = torrentStream(fs.readFileSync(torrentPath));
 
     engine.on('ready', () => {
         console.log('Torrent ready:', engine.files.map(f => f.name));
 
-        // Find the first video file
         const videoFile = engine.files.find(file =>
             file.name.endsWith('.mp4') || file.name.endsWith('.mkv')
         );
 
         if (!videoFile) {
-            return res.status(400).json({ error: 'No video file found in torrent.' });
+            return res.status(400).send('No video file found in torrent.');
         }
 
         console.log('Streaming:', videoFile.name);
@@ -63,34 +51,27 @@ app.post('/upload', upload.single('file'), (req, res) => {
     });
 
     engine.on('error', (err) => {
-        console.error('Torrent engine error:', err);
-        res.status(500).json({ error: 'Error processing torrent.' });
+        console.error('Torrent error:', err);
+        res.status(500).send('Error processing torrent.');
     });
 });
 
-// Serve the video stream
 app.get('/stream', (req, res) => {
-    if (!engine) {
-        return res.status(400).json({ error: 'No torrent loaded.' });
-    }
+    if (!engine) return res.status(400).send('No torrent loaded.');
 
     const fileName = req.query.file;
     const file = engine.files.find(f => f.name === fileName);
 
-    if (!file) {
-        return res.status(404).json({ error: 'File not found.' });
-    }
+    if (!file) return res.status(404).send('File not found.');
 
     const range = req.headers.range;
-    if (!range) {
-        return res.status(416).json({ error: 'Requires Range header' });
-    }
+    if (!range) return res.status(416).send('Requires Range header');
 
     const positions = range.replace(/bytes=/, '').split('-');
     const start = parseInt(positions[0], 10);
     const end = positions[1] ? parseInt(positions[1], 10) : file.length - 1;
-    const chunkSize = (end - start) + 1;
 
+    const chunkSize = (end - start) + 1;
     res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${file.length}`,
         'Accept-Ranges': 'bytes',
